@@ -110,9 +110,6 @@ const AttendanceLogin: React.FC<AttendanceLoginProps> = ({ onLogin }) => {
         </form>
 
         <div className="mt-6 text-center">
-          <p className="text-xs text-gray-500 mb-2">
-            Credenciais: admin / elite2024
-          </p>
           <a
             href="/"
             className="block mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"

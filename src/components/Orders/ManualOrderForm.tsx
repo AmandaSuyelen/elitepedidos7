@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useOrders } from '../../hooks/useOrders';
+import { usePDVCashRegister } from '../../hooks/usePDVCashRegister';
 import { useNeighborhoods } from '../../hooks/useNeighborhoods';
 import { products } from '../../data/products';
 import { 
@@ -14,7 +15,8 @@ import {
   Save,
   ShoppingBag,
   Search,
-  X
+  X,
+  AlertCircle
 } from 'lucide-react';
 
 interface ManualOrderFormProps {
@@ -24,6 +26,7 @@ interface ManualOrderFormProps {
 
 const ManualOrderForm: React.FC<ManualOrderFormProps> = ({ onClose, onOrderCreated }) => {
   const { createOrder } = useOrders();
+  const { isOpen: isCashRegisterOpen, currentRegister } = usePDVCashRegister();
   const { neighborhoods } = useNeighborhoods();
   
   const [customerName, setCustomerName] = useState('');
@@ -50,6 +53,7 @@ const ManualOrderForm: React.FC<ManualOrderFormProps> = ({ onClose, onOrderCreat
   const [observations, setObservations] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   // Filter products based on search term
   const filteredProducts = searchTerm
     ? products.filter(p => 
@@ -171,7 +175,29 @@ const ManualOrderForm: React.FC<ManualOrderFormProps> = ({ onClose, onOrderCreat
         onOrderCreated(newOrder.id);
       }
       
-      alert('Pedido criado com sucesso!');
+      // Mostrar mensagem de sucesso
+      setShowSuccessMessage(true);
+      
+      // Criar notificação de sucesso
+      const successNotification = document.createElement('div');
+      successNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center gap-3';
+      successNotification.innerHTML = `
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+        </svg>
+        <div>
+          <p class="font-semibold">Pedido manual criado com sucesso!</p>
+          <p class="text-sm opacity-90">Pedido #${newOrder.id.slice(-8)}</p>
+        </div>
+      `;
+      document.body.appendChild(successNotification);
+      
+      setTimeout(() => {
+        if (document.body.contains(successNotification)) {
+          document.body.removeChild(successNotification);
+        }
+      }, 4000);
+      
       onClose();
     } catch (error) {
       console.error('Erro ao criar pedido:', error);
@@ -564,7 +590,7 @@ const ManualOrderForm: React.FC<ManualOrderFormProps> = ({ onClose, onOrderCreat
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || items.length === 0}
+              disabled={isSubmitting || items.length === 0 || !isCashRegisterOpen}
               className="px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white rounded-lg transition-colors flex items-center gap-2"
             >
               {isSubmitting ? (
@@ -579,9 +605,34 @@ const ManualOrderForm: React.FC<ManualOrderFormProps> = ({ onClose, onOrderCreat
                 </>
               )}
             </button>
+            {!isCashRegisterOpen && (
+              <div className="absolute bottom-20 right-6 bg-red-100 text-red-700 px-4 py-2 rounded-lg text-sm">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={16} />
+                  <span>Não é possível criar pedidos sem um caixa aberto</span>
+                </div>
+              </div>
+            )}
           </div>
         </form>
       </div>
+      
+      {/* Success Message Overlay */}
+      {showSuccessMessage && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-2xl">
+            <div className="bg-green-100 rounded-full p-4 w-20 h-20 mx-auto mb-4 flex items-center justify-center">
+              <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">Pedido Criado!</h2>
+            <p className="text-gray-600 mb-4">
+              O pedido manual foi criado com sucesso no sistema.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

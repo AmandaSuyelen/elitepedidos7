@@ -17,7 +17,7 @@ interface ProductCardProps {
 const ProductCard: React.FC<ProductCardProps> = ({ product, onOpenModal, isSpecialOfTheDay = false, disabled = false }) => {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(true);
-  const isAvailable = isProductAvailable(product);
+  const isAvailable = isProductAvailable(product) && product.isActive !== false;
   const { getProductImage } = useImageUpload();
 
   const getDisplayPrice = () => {

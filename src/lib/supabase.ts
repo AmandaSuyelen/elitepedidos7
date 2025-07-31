@@ -8,7 +8,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 let supabase: ReturnType<typeof createClient>
 
 // Check if environment variables are available
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes('placeholder') || supabaseAnonKey.includes('placeholder')) {
   console.warn('⚠️ Supabase environment variables are missing or contain placeholder values')
   console.warn('⚠️ Some features requiring database access will not work')
   console.warn('⚠️ Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file')
@@ -21,6 +21,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
     }
   })
 } else {
+  console.log('✅ Supabase environment variables loaded successfully')
+  console.log('🔗 Connecting to:', supabaseUrl)
+  
   // Create Supabase client with actual credentials
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
@@ -39,6 +42,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
       params: {
         eventsPerSecond: 10
       }
+    },
+    // Add retry and timeout configuration
+    fetch: (url, options = {}) => {
+      return fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(15000), // 15 second timeout
+      });
     }
   })
 }

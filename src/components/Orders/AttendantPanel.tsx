@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useOrders } from '../../hooks/useOrders';
 import { usePermissions } from '../../hooks/usePermissions';
 import PermissionGuard from '../PermissionGuard';
+import OrderPrintView from './OrderPrintView';
 import OrderCard from './OrderCard';
 import ManualOrderForm from './ManualOrderForm';
 import { OrderStatus } from '../../types/order';
@@ -21,17 +22,23 @@ import {
 
 interface AttendantPanelProps {
   onBackToAdmin?: () => void;
+  storeSettings?: any;
 }
 
-const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
+const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin, storeSettings }) => {
   const { hasPermission } = usePermissions();
   const { orders, loading, updateOrderStatus } = useOrders();
   const [statusFilter, setStatusFilter] = useState<OrderStatus | 'all'>('all');
   const [showManualOrderForm, setShowManualOrderForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [lastOrderCount, setLastOrderCount] = useState(0);
+  const [newOrder, setNewOrder] = useState<any | null>(null);
   const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [showPrintPreview, setShowPrintPreview] = useState(false);
+  
+  // Always allow access for attendant panel - remove permission guard
+  const canAccess = true;
 
   // Carregar configuração de som
   useEffect(() => {
@@ -46,6 +53,54 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
     }
   }, []);
 
+  // Carregar configurações de impressora
+  const [printerSettings, setPrinterSettings] = useState({
+    auto_print_delivery: false,
+    auto_print_enabled: false
+  });
+  
+  useEffect(() => {
+    try {
+      const savedSettings = localStorage.getItem('pdv_settings');
+      if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        if (settings.printer_layout) {
+          setPrinterSettings({
+            auto_print_delivery: settings.printer_layout.auto_print_delivery || false,
+            auto_print_enabled: settings.printer_layout.auto_print_enabled || false
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao carregar configurações de impressora:', error);
+    }
+  }, []);
+
+  // Carregar configurações de impressão automática do banco
+  useEffect(() => {
+    const loadPrinterSettings = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('pdv_settings')
+          .select('auto_print')
+          .eq('id', 'loja1')
+          .single();
+
+        if (data && !error) {
+          setPrinterSettings(prev => ({
+            ...prev,
+            auto_print_enabled: data.auto_print || false,
+            auto_print_delivery: data.auto_print || false
+          }));
+          console.log('✅ Configurações de impressão carregadas:', data.auto_print);
+        }
+      } catch (err) {
+        console.warn('⚠️ Erro ao carregar configurações de impressão:', err);
+      }
+    };
+
+    loadPrinterSettings();
+  }, []);
   // Alternar som de notificação
   const toggleSound = () => {
     try {
@@ -67,11 +122,52 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
     // Contar pedidos pendentes
     const currentPendingCount = orders.filter(order => order.status === 'pending').length;
     setPendingOrdersCount(currentPendingCount);
-    console.log('📊 Pedidos pendentes:', currentPendingCount, 'Anterior:', lastOrderCount);
     
-    // Se já tínhamos contagem anterior e agora temos mais pedidos pendentes, tocar som
-    if (lastOrderCount > 0 && currentPendingCount > lastOrderCount) {
+    // Verificar se há novos pedidos pendentes
+    if (currentPendingCount > lastOrderCount && lastOrderCount >= 0) {
       console.log('🔔 Novos pedidos detectados!');
+      
+      // Encontrar o novo pedido
+      const pendingOrders = orders.filter(order => order.status === 'pending');
+      const newOrders = pendingOrders.slice(0, currentPendingCount - lastOrderCount);
+      
+      if (newOrders.length > 0) {
+        // Pegar o pedido mais recente
+        const latestOrder = newOrders.sort((a, b) => 
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )[0];
+        
+        setNewOrder(latestOrder);
+        
+        console.log('🖨️ Verificando configuração de impressão automática:', {
+          auto_print_enabled: printerSettings.auto_print_enabled,
+          auto_print_delivery: printerSettings.auto_print_delivery,
+          newOrderId: latestOrder.id
+        });
+        
+        // Imprimir automaticamente se configurado
+        if (printerSettings.auto_print_enabled && latestOrder.status === 'pending') {
+          console.log('🖨️ Imprimindo pedido automaticamente:', latestOrder.id);
+          setShowPrintPreview(true);
+          
+          // Mostrar notificação de impressão automática
+          const printNotification = document.createElement('div');
+          printNotification.className = 'fixed top-4 left-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2';
+          printNotification.innerHTML = `
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path>
+            </svg>
+            Imprimindo pedido #${latestOrder.id.slice(-8)} automaticamente
+          `;
+          document.body.appendChild(printNotification);
+          
+          setTimeout(() => {
+            if (document.body.contains(printNotification)) {
+              document.body.removeChild(printNotification);
+            }
+          }, 4000);
+        }
+      }
       
       // Verificar se o som está habilitado
       if (soundEnabled) {
@@ -83,7 +179,7 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
     
     // Atualizar contagem para próxima verificação
     setLastOrderCount(currentPendingCount);
-  }, [orders]);
+  }, [orders, printerSettings.auto_print_enabled, soundEnabled]);
 
   // Função para tocar som de novo pedido
   const playNewOrderSound = () => {
@@ -154,6 +250,29 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
     }
   };
 
+  // Função para gerar mensagem de resumo de pedidos pendentes
+  const generatePendingOrdersMessage = (pendingOrders: any[]) => {
+    let message = `🔔 *RESUMO DE PEDIDOS PENDENTES - ELITE AÇAÍ*\n\n`;
+    message += `📊 *${pendingOrders.length} pedido(s) aguardando confirmação*\n\n`;
+    
+    pendingOrders.forEach((order, index) => {
+      message += `*${index + 1}. Pedido #${order.id.slice(-8)}*\n`;
+      message += `👤 Cliente: ${order.customer_name}\n`;
+      message += `📱 Telefone: ${order.customer_phone}\n`;
+      message += `📍 Endereço: ${order.customer_address}, ${order.customer_neighborhood}\n`;
+      message += `💰 Total: ${formatPrice(order.total_price)}\n`;
+      message += `💳 Pagamento: ${getPaymentMethodLabel(order.payment_method)}\n`;
+      message += `🕐 Recebido: ${formatDate(order.created_at)}\n\n`;
+    });
+    
+    const totalValue = pendingOrders.reduce((sum, order) => sum + order.total_price, 0);
+    message += `💵 *Valor Total dos Pedidos: ${formatPrice(totalValue)}*\n\n`;
+    message += `⚠️ *Ação Necessária:* Confirmar pedidos para iniciar preparo\n\n`;
+    message += `📱 Elite Açaí - Sistema de Atendimento\n`;
+    message += `🕐 Enviado em: ${new Date().toLocaleString('pt-BR')}`;
+    
+    return encodeURIComponent(message);
+  };
   const filteredOrders = orders.filter(order => {
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
     const matchesSearch = searchTerm === '' || 
@@ -191,10 +310,10 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
   }
 
   return (
-    <PermissionGuard hasPermission={hasPermission('can_view_orders')} showMessage={true}>
+    <div>
       <div className="min-h-screen bg-gray-50">
         {/* Header */}
-        <header className="bg-white shadow-sm border-b">
+        <header className="bg-white shadow-sm border-b print:hidden">
           <div className="max-w-7xl mx-auto px-4 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -257,13 +376,21 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
                   </button>
                 )}
               </div>
+              {printerSettings.auto_print_enabled && (
+                <div className="flex items-center gap-1 bg-green-50 text-green-700 px-2 py-1 rounded-full text-xs">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                  </svg>
+                  Auto Print
+                </div>
+              )}
             </div>
           </div>
         </header>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* Filters */}
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+        <div className="bg-white rounded-xl shadow-sm p-6 mb-6 print:hidden">
           <div className="flex flex-col lg:flex-row gap-4">
             {/* Search */}
             <div className="flex-1">
@@ -296,7 +423,7 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
           </div>
 
           {/* Status Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mt-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mt-4 print:hidden">
             {statusOptions.map(option => {
               const Icon = option.icon;
               const isActive = statusFilter === option.value;
@@ -321,7 +448,7 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
         </div>
 
         {/* Orders List */}
-        <div className="space-y-4">
+        <div className="space-y-4 print:hidden">
           {filteredOrders.length === 0 ? (
             <div className="bg-white rounded-xl shadow-sm p-12 text-center">
               <Package size={48} className="mx-auto text-gray-300 mb-4" />
@@ -360,8 +487,20 @@ const AttendantPanel: React.FC<AttendantPanelProps> = ({ onBackToAdmin }) => {
           }}
         />
       )}
+      
+      {/* Print Preview Modal */}
+      {showPrintPreview && newOrder && (
+        <OrderPrintView 
+          order={newOrder} 
+          storeSettings={null}
+          onClose={() => {
+            setShowPrintPreview(false);
+            setNewOrder(null);
+          }} 
+        />
+      )}
     </div>
-    </PermissionGuard>
+    </div>
   );
 };
 

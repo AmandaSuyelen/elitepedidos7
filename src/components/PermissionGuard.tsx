@@ -24,25 +24,39 @@ const PermissionGuard: React.FC<PermissionGuardProps> = ({
 }) => {
   const navigate = useNavigate();
   
-  // Always allow access in development mode, admin mode, or if user has permission
-  if (hasPermission) {
-  }
+  // Always allow access in development mode or if user has permission
   const isDevelopment = process.env.NODE_ENV === 'development';
   
   // Check if user is admin in multiple ways
   let isAdmin = false;
   try {
+    // Check PDV operator
     const storedOperator = localStorage.getItem('pdv_operator');
     if (storedOperator) {
       const operator = JSON.parse(storedOperator);
       isAdmin = operator.code?.toUpperCase() === 'ADMIN' || 
                 operator.name?.toUpperCase().includes('ADMIN');
     }
+    
+    // Check attendance session
+    const attendanceSession = localStorage.getItem('attendance_session');
+    if (attendanceSession) {
+      const session = JSON.parse(attendanceSession);
+      isAdmin = isAdmin || session.user?.role === 'admin' || 
+                session.user?.username === 'admin';
+    }
+    
+    // Check admin session
+    const adminSession = localStorage.getItem('admin_session');
+    if (adminSession) {
+      const session = JSON.parse(adminSession);
+      isAdmin = isAdmin || session.isAuthenticated;
+    }
   } catch (error) {
     console.error('Error checking admin status:', error);
   }
   
-  // Grant full access in development mode
+  // Grant full access if user has permission, is admin, or in development
   if (hasPermission || isDevelopment || isAdmin) {
     return <>{children}</>;
   }

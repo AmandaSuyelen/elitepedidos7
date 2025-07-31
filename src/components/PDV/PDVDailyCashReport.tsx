@@ -200,6 +200,162 @@ const PDVDailyCashReport: React.FC = () => {
     }, 100);
   };
 
+  const handlePrintThermal = () => {
+    // Create a new window for thermal printing
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    // Get printer settings
+    const savedSettings = localStorage.getItem('pdv_settings');
+    let printerSettings = {
+      paper_width: '80mm',
+      font_size: 2,
+      scale: 1,
+      margin_left: 0,
+      margin_top: 1,
+      margin_bottom: 1
+    };
+
+    if (savedSettings) {
+      try {
+        const settings = JSON.parse(savedSettings);
+        if (settings.printer_layout) {
+          printerSettings = { ...printerSettings, ...settings.printer_layout };
+        }
+      } catch (e) {
+        console.error('Erro ao carregar configurações de impressora:', e);
+      }
+    }
+
+    // Generate thermal receipt content
+    const thermalContent = generateThermalContent(summary, entries, printerSettings);
+    
+    printWindow.document.write(thermalContent);
+    printWindow.document.close();
+    
+    // Wait for content to load then print
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 500);
+  };
+
+  const generateThermalContent = (summary: CashSummary, entries: CashEntry[], settings: any) => {
+    if (!summary) return '';
+
+    const formatPrice = (price: number) => {
+      return new Intl.NumberFormat('pt-BR', {
+        style: 'currency',
+        currency: 'BRL'
+      }).format(price);
+    };
+
+    const formatDate = (dateString: string) => {
+      return new Date(dateString).toLocaleString('pt-BR');
+    };
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Relatório de Caixa Diário - Elite Açaí</title>
+        <style>
+          @page {
+            size: ${settings.paper_width} auto;
+            margin: 0;
+            padding: 0;
+          }
+          
+          body {
+            margin: 0;
+            padding: ${settings.margin_top}mm ${settings.margin_left}mm ${settings.margin_bottom}mm;
+            background: white;
+            font-family: 'Courier New', monospace;
+            font-size: ${settings.font_size * 4}px;
+            line-height: 1.3;
+            color: black;
+            transform: scale(${settings.scale});
+            transform-origin: top left;
+          }
+          
+          .center { text-align: center; }
+          .bold { font-weight: bold; }
+          .border-b { border-bottom: 1px solid black; margin: 2mm 0; }
+          .border-dashed { border-bottom: 1px dashed black; margin: 2mm 0; }
+          .flex { display: flex; justify-content: space-between; }
+          .mb-1 { margin-bottom: 1mm; }
+          .mb-2 { margin-bottom: 2mm; }
+          .small { font-size: ${settings.font_size * 3}px; }
+        </style>
+      </head>
+      <body>
+        <div class="center mb-2">
+          <div class="bold">ELITE AÇAÍ</div>
+          <div class="small">Relatório de Caixa Diário</div>
+          <div class="small">Rua Dois, 2130-A - Residencial 1</div>
+          <div class="small">Tel: (85) 98904-1010</div>
+        </div>
+        
+        <div class="border-dashed"></div>
+        
+        <div class="center bold mb-2">
+          RELATÓRIO DO DIA ${new Date(date).toLocaleDateString('pt-BR')}
+        </div>
+        
+        <div class="mb-2">
+          <div class="bold mb-1">RESUMO FINANCEIRO:</div>
+          <div class="flex"><span>Vendas PDV:</span><span>${formatPrice(summary.pdv_sales.total)}</span></div>
+          <div class="flex"><span>Vendas Delivery:</span><span>${formatPrice(summary.delivery_sales.total)}</span></div>
+          <div class="flex"><span>Entradas Manuais:</span><span>${formatPrice(summary.manual_income.total)}</span></div>
+          <div class="flex"><span>Saídas:</span><span>${formatPrice(summary.expenses.total)}</span></div>
+          <div class="border-b"></div>
+          <div class="flex bold"><span>SALDO FINAL:</span><span>${formatPrice(summary.expected_balance)}</span></div>
+        </div>
+        
+        <div class="border-dashed"></div>
+        
+        <div class="mb-2">
+          <div class="bold mb-1">CONTADORES:</div>
+          <div class="flex"><span>Vendas PDV:</span><span>${summary.pdv_sales.count}</span></div>
+          <div class="flex"><span>Vendas Delivery:</span><span>${summary.delivery_sales.count}</span></div>
+          <div class="flex"><span>Entradas Manuais:</span><span>${summary.manual_income.count}</span></div>
+          <div class="flex"><span>Saídas:</span><span>${summary.expenses.count}</span></div>
+        </div>
+        
+        ${entries.length > 0 ? `
+        <div class="border-dashed"></div>
+        
+        <div class="mb-2">
+          <div class="bold mb-1">MOVIMENTAÇÕES:</div>
+          ${entries.slice(0, 20).map((entry, index) => `
+            <div class="mb-1 small">
+              <div>${index + 1}. ${entry.type === 'income' ? 'ENT' : 'SAI'} - ${formatDate(entry.created_at).split(' ')[1]}</div>
+              <div>${entry.description}</div>
+              <div class="flex">
+                <span>${getPaymentMethodLabel(entry.payment_method)}</span>
+                <span>${entry.type === 'income' ? '+' : '-'}${formatPrice(entry.amount)}</span>
+              </div>
+            </div>
+          `).join('')}
+          ${entries.length > 20 ? `<div class="small center">... e mais ${entries.length - 20} movimentações</div>` : ''}
+        </div>
+        ` : ''}
+        
+        <div class="border-dashed"></div>
+        
+        <div class="center small">
+          <div>Relatório gerado em:</div>
+          <div>${new Date().toLocaleString('pt-BR')}</div>
+          <div class="mt-2">Elite Açaí - Sistema PDV</div>
+          <div>CNPJ: 00.000.000/0001-00</div>
+          <div>Este é um relatório interno</div>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
   const handleExport = () => {
     if (!summary) return;
 
@@ -345,6 +501,14 @@ const PDVDailyCashReport: React.FC = () => {
               >
                 <Printer size={16} />
                 Imprimir
+              </button>
+              <button
+                onClick={handlePrintThermal}
+                disabled={!summary}
+                className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+              >
+                <Printer size={16} />
+                Impressão Térmica
               </button>
               <button
                 onClick={handleExport}

@@ -281,54 +281,48 @@ export const useImageUpload = () => {
           supabaseUrl === 'your_supabase_url_here' || 
           supabaseKey === 'your_supabase_anon_key_here' ||
           supabaseUrl.includes('placeholder')) {
-        console.warn('Supabase not configured, using fallback image')
+        console.warn('Supabase not configured, using fallback image');
         return null
       }
 
       const cleanProductId = productId;
             
-      // Query with improved error handling and shorter timeout
-      const timeoutPromise = new Promise<{ data: null, error: { message: string } }>((_, reject) => {
-        setTimeout(() => reject(new Error('Database query timeout')), 3000);
-      });
+      try {
+        const { data, error } = await supabase
+          .from('product_image_associations')
+          .select(`
+            image:product_images(public_url)
+          `)
+          .eq('product_id', cleanProductId)
+          .maybeSingle();
+        
+        if (error) {
+          console.warn(`⚠️ Database error loading image for product ${cleanProductId}:`, error.message);
+          return null;
+        }
 
-      const queryPromise = supabase
-        .from('product_image_associations')
-        .select(`
-          image:product_images(public_url)
-        `)
-        .eq('product_id', cleanProductId)
-        .maybeSingle();
-
-      const result = await Promise.race([queryPromise, timeoutPromise]);
-      
-      if (!result) {
-        return null;
-      } else if (result.error) {
-        // Handle specific error types
-        if (result.error.message.includes('Failed to fetch') || 
-            result.error.message.includes('fetch')) {
+        if (!data) {
+          return null;
+        }
+        
+        return data.image?.public_url || null;
+      } catch (fetchError) {
+        // Handle network errors gracefully
+        if (fetchError instanceof TypeError && fetchError.message.includes('Failed to fetch')) {
           console.warn(`🌐 Network error loading image for product ${cleanProductId} - using fallback`);
         } else {
-          console.warn(`⚠️ Database error loading image for product ${cleanProductId}:`, result.error.message);
+          console.warn(`⚠️ Unexpected error loading image for product ${cleanProductId}:`, fetchError);
         }
         return null;
       }
-      
-      const { data } = result;
-
-      if (!data) {
-        return null;
-      }
-      
-      return data.image?.public_url || null;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       
       // Handle different types of network errors gracefully
-      if (err instanceof TypeError && (errorMessage.includes('Failed to fetch') || errorMessage.includes('fetch'))) {
+      if (err instanceof TypeError && (errorMessage.includes('Failed to fetch') || 
+          errorMessage.includes('fetch') || errorMessage.includes('NetworkError'))) {
         console.warn(`🌐 Network connectivity issue - using fallback image for product ${productId}`);
-      } else if (errorMessage.includes('timeout')) {
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('aborted')) {
         console.warn(`⏱️ Request timeout - using fallback image for product ${productId}`);
       } else {
         console.warn(`⚠️ Unexpected error loading image for product ${productId}:`, errorMessage);

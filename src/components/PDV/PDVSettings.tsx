@@ -1,60 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Calendar, Clock, Tag, Store, DollarSign, Printer, Save, RefreshCw, AlertCircle } from 'lucide-react';
-import { usePermissions } from '../../hooks/usePermissions';
-import PermissionGuard from '../PermissionGuard';
-import { useStoreHours } from '../../hooks/useStoreHours';
-import { StoreHours } from '../../types/store';
-import ProductScheduleModal from '../Admin/ProductScheduleModal';
-import { products } from '../../data/products';
-import { useProductScheduling } from '../../hooks/useProductScheduling';
+import { Order } from '../../types/order';
 
-const PDVSettings: React.FC = () => {
-  const { hasPermission } = usePermissions();
-  const { storeHours, storeSettings, updateStoreHours, updateStoreSettings, getStoreStatus } = useStoreHours();
-  const { getProductSchedule, saveProductSchedule } = useProductScheduling();
-  
-  const [activeTab, setActiveTab] = useState<'store' | 'delivery' | 'promotions' | 'printer'>('store');
-  const [localHours, setLocalHours] = useState<Record<number, Partial<StoreHours>>>({});
-  const [localSettings, setLocalSettings] = useState({
-    store_name: '',
-    phone: '',
-    cnpj: '',
-    address: '',
-    delivery_fee: 0,
-    min_order_value: 0,
-    estimated_delivery_time: 0,
-    is_open_now: true
-  });
-  const [saving, setSaving] = useState(false);
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [selectedProductForSchedule, setSelectedProductForSchedule] = useState<any | null>(null);
+interface OrderPrintViewProps {
+  order: Order;
+  storeSettings?: any;
+  onClose: () => void;
+}
+
+const OrderPrintView: React.FC<OrderPrintViewProps> = ({ order, storeSettings, onClose }) => {
   const [printerSettings, setPrinterSettings] = useState({
     paper_width: '80mm',
-    page_size: 300,
-    font_size: 2,
-    delivery_font_size: 14,
-    scale: 1,
-    margin_left: 0,
-    margin_top: 1,
-    margin_bottom: 1
+    font_size: 14,
+    auto_adjust: true
   });
-
-  // Inicializar configurações locais quando os dados carregarem
-  useEffect(() => {
-    if (storeSettings) {
-      setLocalSettings({
-        store_name: storeSettings.store_name || '',
-        phone: storeSettings.phone || '',
-        cnpj: storeSettings.cnpj || '',
-        address: storeSettings.address || '',
-        delivery_fee: storeSettings.delivery_fee || 0,
-        min_order_value: storeSettings.min_order_value || 0,
-        estimated_delivery_time: storeSettings.estimated_delivery_time || 0,
-        is_open_now: storeSettings.is_open_now ?? true
-      });
-    }
-  }, [storeSettings]);
 
   // Carregar configurações de impressora do localStorage
   useEffect(() => {
@@ -63,7 +21,12 @@ const PDVSettings: React.FC = () => {
       try {
         const settings = JSON.parse(savedSettings);
         if (settings.printer_layout) {
-          setPrinterSettings(settings.printer_layout);
+          setPrinterSettings(prev => ({
+            ...prev,
+            paper_width: settings.printer_layout.paper_width || '80mm',
+            font_size: settings.printer_layout.font_size || 14,
+            auto_adjust: settings.printer_layout.auto_adjust !== false
+          }));
         }
       } catch (e) {
         console.error('Erro ao carregar configurações de impressora:', e);
@@ -71,740 +34,551 @@ const PDVSettings: React.FC = () => {
     }
   }, []);
 
-  // Limpar alterações locais quando os dados do servidor mudarem
-  useEffect(() => {
-    setLocalHours({});
-  }, [storeHours]);
+  // Calcular tamanhos baseado no papel
+  const getResponsiveSizes = () => {
+    if (!printerSettings.auto_adjust) {
+      return {
+        baseFontSize: printerSettings.font_size,
+        titleSize: printerSettings.font_size + 4,
+        smallSize: printerSettings.font_size - 2,
+        width: '76mm'
+      };
+    }
 
-  const getHoursForDay = (dayOfWeek: number) => {
-    const localHour = localHours[dayOfWeek];
-    const originalHour = storeHours.find(h => h.day_of_week === dayOfWeek);
+    switch (printerSettings.paper_width) {
+      case '58mm':
+        return {
+          baseFontSize: 10,
+          titleSize: 14,
+          smallSize: 8,
+          width: '54mm'
+        };
+      case '80mm':
+        return {
+          baseFontSize: 14,
+          titleSize: 18,
+          smallSize: 10,
+          width: '76mm'
+        };
+      case 'A4':
+        return {
+          baseFontSize: 16,
+          titleSize: 22,
+          smallSize: 12,
+          width: '190mm'
+        };
+      default:
+        return {
+          baseFontSize: 14,
+          titleSize: 18,
+          smallSize: 10,
+          width: '76mm'
+        };
+    }
+  };
+
+  const sizes = getResponsiveSizes();
+
+  const formatPrice = (price: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(price);
+  const getPaymentMethodLabel = (method: string) => method === 'money' ? 'Dinheiro' : method === 'pix' ? 'PIX' : method === 'card' ? 'Cartão' : method;
+  const getStatusLabel = (status: string) => ({
+    pending: 'Pendente', confirmed: 'Confirmado', preparing: 'Em Preparo',
+    out_for_delivery: 'Saiu para Entrega', ready_for_pickup: 'Pronto para Retirada',
+    delivered: 'Entregue', cancelled: 'Cancelado'
+  })[status] || status;
+
+  const handlePrint = () => {
+    // Criar uma nova janela com conteúdo específico para impressão térmica
+    const printWindow = window.open('', '_blank', 'width=300,height=600');
+    if (!printWindow) {
+      alert('Por favor, permita pop-ups para imprimir');
+      return;
+    }
+
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Pedido #${order.id.slice(-8)}</title>
+        <style>
+          @page {
+            size: ${printerSettings.paper_width} auto;
+            margin: 0;
+          }
+          
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            color: black !important;
+            background: white !important;
+          }
+          
+          body {
+            font-family: 'Courier New', monospace;
+            font-size: ${sizes.baseFontSize}px;
+            line-height: 1.3;
+            color: black;
+            background: white;
+            padding: 2mm;
+            width: ${sizes.width};
+          }
+          
+          .center { text-align: center; }
+          .bold { font-weight: bold; }
+          .small { font-size: ${sizes.smallSize}px; }
+          .title { font-size: ${sizes.titleSize}px; }
+          .separator { 
+            border-bottom: 1px dashed black; 
+            margin: 5px 0; 
+            padding-bottom: 5px; 
+          }
+          .flex-between { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+          }
+          .mb-1 { margin-bottom: 2px; }
+          .mb-2 { margin-bottom: 5px; }
+          .mb-3 { margin-bottom: 8px; }
+          .mt-1 { margin-top: 2px; }
+          .mt-2 { margin-top: 5px; }
+          .ml-2 { margin-left: 8px; }
+          
+          img {
+            max-width: 60mm;
+            height: auto;
+            display: block;
+            margin: 5px auto;
+          }
+        </style>
+      </head>
+      <body>
+        <!-- Cabeçalho -->
+        <div class="center mb-3 separator">
+          <div class="bold title" style="color: #000;">ELITE AÇAÍ</div>
+          <div class="small">Delivery Premium</div>
+          <div class="small">Rua Um, 1614-C</div>
+          <div class="small">Residencial 1 - Cágado</div>
+          <div class="small">Tel: (85) 98904-1010</div>
+          <div class="small">CNPJ: ${storeSettings?.cnpj || '38.130.139/0001-22'}</div>
+        </div>
+        
+        <!-- Dados do Pedido -->
+        <div class="mb-3 separator">
+          <div class="bold center mb-2" style="font-size: ${sizes.baseFontSize + 2}px;">=== PEDIDO DE DELIVERY ===</div>
+          <div class="small">Pedido: #${order.id.slice(-8)}</div>
+          <div class="small">Data: ${new Date(order.created_at).toLocaleDateString('pt-BR')}</div>
+          <div class="small">Hora: ${new Date(order.created_at).toLocaleTimeString('pt-BR')}</div>
+          <div class="small">Status: ${getStatusLabel(order.status)}</div>
+        </div>
+        
+        <!-- Cliente -->
+        <div class="mb-3 separator">
+          <div class="bold mb-1" style="font-size: ${sizes.baseFontSize + 1}px;">DADOS DO CLIENTE:</div>
+          <div class="small">Nome: ${order.customer_name}</div>
+          <div class="small">Telefone: ${order.customer_phone}</div>
+          <div class="small">Endereço: ${order.customer_address}</div>
+          <div class="small">Bairro: ${order.customer_neighborhood}</div>
+          ${order.customer_complement ? `<div class="small">Complemento: ${order.customer_complement}</div>` : ''}
+        </div>
+        
+        <!-- Itens -->
+        <div class="mb-3 separator">
+          <div class="bold mb-1" style="font-size: ${sizes.baseFontSize + 1}px;">ITENS DO PEDIDO:</div>
+          ${order.items.map((item, index) => `
+            <div class="mb-2">
+              <div class="bold" style="font-size: ${sizes.baseFontSize}px;">${item.product_name}</div>
+              ${item.selected_size ? `<div class="small">Tamanho: ${item.selected_size}</div>` : ''}
+              <div class="flex-between">
+                <span class="small">${item.quantity}x ${formatPrice(item.unit_price)}</span>
+                <span class="small">${formatPrice(item.total_price)}</span>
+              </div>
+              ${item.complements && item.complements.length > 0 ? `
+                <div class="ml-2 mt-1">
+                  <div class="small">Complementos:</div>
+                  ${item.complements.map(comp => `
+                    <div class="small ml-2">• ${comp.name}${comp.price > 0 ? ` (+${formatPrice(comp.price)})` : ''}</div>
+                  `).join('')}
+                </div>
+              ` : ''}
+              ${item.observations ? `<div class="small ml-2 mt-1">Obs: ${item.observations}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+        
+        <!-- Resumo -->
+        <div class="mb-3 separator">
+          <div class="bold mb-1" style="font-size: ${sizes.baseFontSize + 1}px;">RESUMO:</div>
+          <div class="flex-between">
+            <span class="small">Subtotal:</span>
+            <span class="small">${formatPrice(order.total_price - (order.delivery_fee || 0))}</span>
+          </div>
+          ${order.delivery_fee && order.delivery_fee > 0 ? `
+          <div class="flex-between">
+            <span class="small">Taxa de Entrega:</span>
+            <span class="small">${formatPrice(order.delivery_fee)}</span>
+          </div>
+          ` : ''}
+          <div style="border-top: 1px solid black; padding-top: 3px; margin-top: 3px;">
+            <div class="flex-between bold">
+              <span style="font-size: ${sizes.baseFontSize + 2}px;">TOTAL:</span>
+              <span style="font-size: ${sizes.baseFontSize + 2}px;">${formatPrice(order.total_price)}</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Pagamento -->
+        <div class="mb-3 separator">
+          <div class="bold mb-1" style="font-size: ${sizes.baseFontSize + 1}px;">PAGAMENTO:</div>
+          <div class="small">Forma: ${getPaymentMethodLabel(order.payment_method)}</div>
+          ${order.change_for ? `<div class="small">Troco para: ${formatPrice(order.change_for)}</div>` : ''}
+          ${order.payment_method === 'pix' ? `
+          <div class="mt-2">
+            <div class="small">⚠️ IMPORTANTE:</div>
+            <div class="small">Envie o comprovante do PIX</div>
+            <div class="small">para confirmar o pedido!</div>
+          </div>
+          ` : ''}
+        </div>
+        
+        <!-- Rodapé -->
+        <div class="center small" style="border-top: 1px solid black; padding-top: 5px;">
+          <div class="bold mb-2" style="font-size: ${sizes.baseFontSize}px;">Obrigado pela preferência!</div>
+          <div>Elite Açaí - O melhor açaí da cidade!</div>
+          <div>@eliteacai</div>
+          <div>⭐⭐⭐⭐⭐ Avalie-nos no Google</div>
+          <div style="margin-top: 8px; padding-top: 5px; border-top: 1px solid black;">
+            <div style="font-size: ${sizes.smallSize}px;">Elite Açaí - CNPJ: ${storeSettings?.cnpj || '00.000.000/0001-00'}</div>
+            <div>Impresso: ${new Date().toLocaleString('pt-BR')}</div>
+            <div>Este não é um documento fiscal</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(printContent);
+    printWindow.document.close();
     
-    return {
-      is_open: localHour?.is_open ?? originalHour?.is_open ?? true,
-      open_time: localHour?.open_time ?? originalHour?.open_time ?? '08:00',
-      close_time: localHour?.close_time ?? originalHour?.close_time ?? '22:00'
+    // Aguardar carregar e imprimir
+    printWindow.onload = () => {
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+      }, 500);
     };
   };
 
-  const updateLocalHours = (dayOfWeek: number, field: keyof StoreHours, value: any) => {
-    setLocalHours(prev => ({
-      ...prev,
-      [dayOfWeek]: {
-        ...prev[dayOfWeek],
-        [field]: value
-      }
-    }));
-  };
-
-  const handleSaveHours = async () => {
-    setSaving(true);
-    try {
-      // Salvar horários modificados
-      const savePromises = [];
-      
-      for (const [dayStr, hours] of Object.entries(localHours)) {
-        const day = parseInt(dayStr);
-        savePromises.push(updateStoreHours(day, hours));
-      }
-
-      // Salvar configurações da loja
-      savePromises.push(updateStoreSettings(localSettings));
-
-      await Promise.all(savePromises);
-
-      // Limpar alterações locais
-      setLocalHours({});
-      
-      setLastSaved(new Date());
-      
-      // Mostrar feedback de sucesso
-      const successMessage = document.createElement('div');
-      successMessage.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2';
-      successMessage.innerHTML = `
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-        </svg>
-        Configurações salvas com sucesso!
-      `;
-      document.body.appendChild(successMessage);
-      
-      setTimeout(() => {
-        document.body.removeChild(successMessage);
-      }, 3000);
-      
-    } catch (error) {
-      console.error('Erro ao salvar:', error);
-      alert('Erro ao salvar configurações. Tente novamente.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSavePrinterSettings = () => {
-    try {
-      // Save printer settings to localStorage
-      const currentSettings = localStorage.getItem('pdv_settings');
-      const settings = currentSettings ? JSON.parse(currentSettings) : {};
-      
-      settings.printer_layout = printerSettings;
-      localStorage.setItem('pdv_settings', JSON.stringify(settings));
-      
-      // Show success message
-      const successMessage = document.createElement('div');
-      successMessage.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2';
-      successMessage.innerHTML = `
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-        </svg>
-        Configurações de impressora salvas com sucesso!
-      `;
-      document.body.appendChild(successMessage);
-      
-      setTimeout(() => {
-        document.body.removeChild(successMessage);
-      }, 3000);
-      
-      setLastSaved(new Date());
-    } catch (error) {
-      console.error('Erro ao salvar configurações de impressora:', error);
-      alert('Erro ao salvar configurações de impressora. Tente novamente.');
-    }
-  };
-
-  const handleScheduleProduct = (product: any) => {
-    setSelectedProductForSchedule(product);
-    setShowScheduleModal(true);
-  };
-
-  const handleSaveSchedule = async (productId: string, scheduledDays: any) => {
-    try {
-      await saveProductSchedule(productId, scheduledDays);
-      setShowScheduleModal(false);
-      setSelectedProductForSchedule(null);
-      
-      // Show success message
-      const successMessage = document.createElement('div');
-      successMessage.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2';
-      successMessage.innerHTML = `
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-        </svg>
-        Programação do produto salva com sucesso!
-      `;
-      document.body.appendChild(successMessage);
-      
-      setTimeout(() => {
-        document.body.removeChild(successMessage);
-      }, 3000);
-    } catch (error) {
-      console.error('Erro ao salvar programação:', error);
-      alert('Erro ao salvar programação. Tente novamente.');
-    }
-  };
-
-  const dayNames = [
-    'Domingo',
-    'Segunda-feira', 
-    'Terça-feira',
-    'Quarta-feira',
-    'Quinta-feira',
-    'Sexta-feira',
-    'Sábado'
-  ];
-
-  const hasChanges = Object.keys(localHours).length > 0 || 
-    JSON.stringify(localSettings) !== JSON.stringify({
-      store_name: storeSettings?.store_name || '',
-      phone: storeSettings?.phone || '',
-      cnpj: storeSettings?.cnpj || '',
-      address: storeSettings?.address || '',
-      delivery_fee: storeSettings?.delivery_fee || 0,
-      min_order_value: storeSettings?.min_order_value || 0,
-      estimated_delivery_time: storeSettings?.estimated_delivery_time || 0,
-      is_open_now: storeSettings?.is_open_now ?? true
-    });
-
   return (
-    <PermissionGuard hasPermission={hasPermission('can_manage_products')} showMessage={true}>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
-              <Settings size={24} className="text-gray-600" />
-              Configurações do Sistema
-            </h2>
-            <p className="text-gray-600">Personalize o funcionamento do PDV e Delivery</p>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="bg-white rounded-xl shadow-sm p-4">
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => setActiveTab('store')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-                activeTab === 'store'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <Store size={18} />
-              Loja
-            </button>
-            <button
-              onClick={() => setActiveTab('delivery')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-                activeTab === 'delivery'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <Clock size={18} />
-              Horários de Funcionamento
-            </button>
-            <button
-              onClick={() => setActiveTab('promotions')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-                activeTab === 'promotions'
-                  ? 'bg-orange-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <Tag size={18} />
-              Promoções
-            </button>
-            <button
-              onClick={() => setActiveTab('printer')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-                activeTab === 'printer'
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <Printer size={18} />
-              Impressora
-            </button>
-          </div>
-        </div>
-
-        {/* Content based on active tab */}
-        {activeTab === 'store' && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Store size={20} className="text-blue-600" />
-              Informações da Loja
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nome da Loja
-                </label>
-                <input
-                  type="text"
-                  value={localSettings.store_name}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, store_name: e.target.value }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Nome da sua loja"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Telefone
-                </label>
-                <input
-                  type="tel"
-                  value={localSettings.phone}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, phone: e.target.value }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="(85) 99999-9999"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  CNPJ
-                </label>
-                <input
-                  type="text"
-                  value={localSettings.cnpj || ''}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, cnpj: e.target.value }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="00.000.000/0001-00"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Endereço
-                </label>
-                <input
-                  type="text"
-                  value={localSettings.address}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, address: e.target.value }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Endereço completo da loja"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Taxa de Entrega (R$)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={localSettings.delivery_fee}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, delivery_fee: parseFloat(e.target.value) || 0 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="5.00"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Pedido Mínimo (R$)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={localSettings.min_order_value}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, min_order_value: parseFloat(e.target.value) || 0 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="15.00"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tempo de Entrega (minutos)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={localSettings.estimated_delivery_time}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, estimated_delivery_time: parseInt(e.target.value) || 0 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="35"
-                />
-              </div>
-
-              <div>
-                <label className="flex items-center gap-2 mb-2">
-                  <span className="text-gray-700 font-medium">Controle Manual:</span>
-                </label>
+    <>
+      {/* Modal Interface - Hidden on print */}
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 print:hidden">
+        <div className="bg-white rounded-lg w-full max-w-md max-h-[90vh] overflow-hidden">
+          {/* Controls */}
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-800">Imprimir Pedido ({printerSettings.paper_width})</h2>
+              <div className="flex gap-2">
                 <button
-                  onClick={() => setLocalSettings(prev => ({ ...prev, is_open_now: !prev.is_open_now }))}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                    localSettings.is_open_now
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                      : 'bg-red-100 text-red-700 hover:bg-red-200'
-                  }`}
+                  onClick={() => {
+                    // Gerar mensagem do pedido para WhatsApp da loja
+                    let message = `🆕 *NOVO PEDIDO RECEBIDO - ELITE AÇAÍ*\n\n`;
+                    message += `📋 *Pedido #${order.id.slice(-8)}*\n`;
+                    message += `🕐 Recebido: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
+                    message += `📊 Status: ${getStatusLabel(order.status)}\n\n`;
+                    
+                    message += `👤 *CLIENTE:*\n`;
+                    message += `Nome: ${order.customer_name}\n`;
+                    message += `📱 Telefone: ${order.customer_phone}\n`;
+                    message += `📍 Endereço: ${order.customer_address}\n`;
+                    message += `🏘️ Bairro: ${order.customer_neighborhood}\n`;
+                    if (order.customer_complement) {
+                      message += `🏠 Complemento: ${order.customer_complement}\n`;
+                    }
+                    
+                    // Adicionar link do Google Maps para localização
+                    const fullAddress = `${order.customer_address}, ${order.customer_neighborhood}`;
+                    const encodedAddress = encodeURIComponent(fullAddress);
+                    message += `📍 *LOCALIZAÇÃO:*\n`;
+                    message += `https://www.google.com/maps/search/?api=1&query=${encodedAddress}\n`;
+                    message += `\n`;
+                    
+                    message += `🛒 *ITENS DO PEDIDO:*\n`;
+                    order.items.forEach((item, index) => {
+                      message += `${index + 1}. ${item.product_name}\n`;
+                      if (item.selected_size) {
+                        message += `   Tamanho: ${item.selected_size}\n`;
+                      }
+                      message += `   Qtd: ${item.quantity}x - ${formatPrice(item.total_price)}\n`;
+                      
+                      if (item.complements && item.complements.length > 0) {
+                        message += `   *Complementos:*\n`;
+                        item.complements.forEach(comp => {
+                          message += `   • ${comp.name}`;
+                          if (comp.price > 0) {
+                            message += ` (+${formatPrice(comp.price)})`;
+                          }
+                          message += `\n`;
+                        });
+                      }
+                      
+                      if (item.observations) {
+                        message += `   *Obs:* ${item.observations}\n`;
+                      }
+                      message += `\n`;
+                    });
+                    
+                    message += `💰 *VALORES:*\n`;
+                    const subtotal = order.total_price - (order.delivery_fee || 0);
+                    message += `Subtotal: ${formatPrice(subtotal)}\n`;
+                    if (order.delivery_fee && order.delivery_fee > 0) {
+                      message += `Taxa de entrega: ${formatPrice(order.delivery_fee)}\n`;
+                    }
+                    message += `*TOTAL: ${formatPrice(order.total_price)}*\n\n`;
+                    
+                    message += `💳 *PAGAMENTO:*\n`;
+                    message += `Forma: ${getPaymentMethodLabel(order.payment_method)}\n`;
+                    if (order.change_for) {
+                      message += `Troco para: ${formatPrice(order.change_for)}\n`;
+                    }
+                    if (order.payment_method === 'pix') {
+                      message += `\n📱 *DADOS PIX:*\n`;
+                      message += `Chave: 85989041010\n`;
+                      message += `Nome: Grupo Elite\n`;
+                      message += `Valor: ${formatPrice(order.total_price)}\n`;
+                    }
+                    message += `\n`;
+                    
+                    message += `⚠️ *AÇÃO NECESSÁRIA:*\n`;
+                    message += `• Confirmar recebimento do pedido\n`;
+                    message += `• Iniciar preparo dos itens\n`;
+                    if (order.payment_method === 'pix') {
+                      message += `• Aguardar comprovante do PIX\n`;
+                    }
+                    message += `\n`;
+                    
+                    message += `📱 Sistema de Atendimento - Elite Açaí`;
+                    
+                    // Abrir WhatsApp da loja
+                    window.open(`https://wa.me/5585989041010?text=${encodeURIComponent(message)}`, '_blank');
+                  }}
+                  className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2"
+                  title="Enviar pedido para WhatsApp da loja"
                 >
-                  {localSettings.is_open_now ? (
-                    <>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Loja Aberta
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                      Loja Fechada
-                    </>
-                  )}
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
+                  </svg>
+                  WhatsApp Loja
                 </button>
-                <p className="text-xs text-gray-500 mt-1">
-                  Sobrescreve os horários automáticos
-                </p>
+                <button
+                  onClick={handlePrint}
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2"
+                >
+                  🖨️ Imprimir
+                </button>
+                <button
+                  onClick={onClose}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm"
+                >
+                  Fechar
+                </button>
               </div>
             </div>
-
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={handleSaveHours}
-                disabled={saving || !hasChanges}
-                className={`px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2 ${
-                  hasChanges
-                    ? 'bg-blue-500 hover:bg-blue-600 text-white'
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    Salvando...
-                  </>
-                ) : (
-                  <>
-                    <Save size={20} />
-                    Salvar Configurações
-                  </>
-                )}
-              </button>
-            </div>
           </div>
-        )}
 
-        {activeTab === 'delivery' && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Clock size={20} className="text-green-600" />
-              Horários de Funcionamento
-            </h3>
-
-            <div className="space-y-4">
-              {dayNames.map((dayName, index) => {
-                const hours = getHoursForDay(index);
-                const hasLocalChanges = localHours[index];
-                
-                return (
-                  <div key={index} className={`border rounded-lg p-4 ${
-                    hasLocalChanges ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200'
-                  }`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-medium text-gray-800 flex items-center gap-2">
-                        {dayName}
-                        {hasLocalChanges && (
-                          <span className="text-xs bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full">
-                            Modificado
-                          </span>
-                        )}
-                      </h3>
-                      <button
-                        onClick={() => updateLocalHours(index, 'is_open', !hours.is_open)}
-                        className={`flex items-center gap-2 px-3 py-1 rounded-lg transition-colors ${
-                          hours.is_open
-                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                            : 'bg-red-100 text-red-700 hover:bg-red-200'
-                        }`}
-                      >
-                        {hours.is_open ? (
-                          <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                            Aberto
-                          </>
-                        ) : (
-                          <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                            Fechado
-                          </>
-                        )}
-                      </button>
+          {/* Preview */}
+          <div className="overflow-y-auto max-h-[calc(90vh-80px)] p-4">
+              <div className="text-center mb-4">
+                <p className="font-bold text-lg">ELITE AÇAÍ</p>
+                <p className="text-sm">Delivery Premium</p>
+                <p className="text-xs">Rua Um, 1614-C</p>
+                <p className="text-xs">Residencial 1 - Cágado</p>
+                <p className="text-xs">Tel: (85) 98904-1010</p>
+                <p className="text-xs">CNPJ: {storeSettings?.cnpj || '38.130.139/0001-22'}</p>
+                <p className="text-xs">--------------------------</p>
+              </div>
+              
+            <div className="mb-3">
+              <p className="text-xs font-bold text-center">=== PEDIDO DE DELIVERY ===</p>
+              <p className="text-xs">Pedido: #{order.id.slice(-8)}</p>
+              <p className="text-xs">Data: {new Date(order.created_at).toLocaleDateString('pt-BR')}</p>
+              <p className="text-xs">Hora: {new Date(order.created_at).toLocaleTimeString('pt-BR')}</p>
+              <p className="text-xs">Status: {getStatusLabel(order.status)}</p>
+              <p className="text-xs">--------------------------</p>
+            </div>
+            
+            <div className="mb-3">
+              <p className="text-xs font-bold">CLIENTE:</p>
+              <p className="text-xs">Nome: {order.customer_name}</p>
+              <p className="text-xs">Telefone: {order.customer_phone}</p>
+              <p className="text-xs">Endereço: {order.customer_address}</p>
+              <p className="text-xs">Bairro: {order.customer_neighborhood}</p>
+              {order.customer_complement && <p className="text-xs">Complemento: {order.customer_complement}</p>}
+              <p className="text-xs">--------------------------</p>
+            </div>
+            
+            <div className="mb-3">
+              <p className="text-xs font-bold">ITENS:</p>
+              {order.items.map((item, index) => (
+                <div key={index} className="text-xs mb-2">
+                  <p>{item.product_name}</p>
+                  {item.selected_size && <p>Tamanho: {item.selected_size}</p>}
+                  <p>{item.quantity}x {formatPrice(item.unit_price)} = {formatPrice(item.total_price)}</p>
+                  
+                  {item.complements && item.complements.length > 0 && (
+                    <div className="ml-2 mt-1">
+                      <p>Complementos:</p>
+                      {item.complements.map((comp, idx) => (
+                        <p key={idx} className="ml-2">• {comp.name}{comp.price > 0 && ` (+${formatPrice(comp.price)})`}</p>
+                      ))}
                     </div>
-
-                    {hours.is_open && (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm text-gray-600 mb-1">Abertura</label>
-                          <input
-                            type="time"
-                            value={hours.open_time}
-                            onChange={(e) => updateLocalHours(index, 'open_time', e.target.value)}
-                            className="w-full p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-gray-600 mb-1">Fechamento</label>
-                          <input
-                            type="time"
-                            value={hours.close_time}
-                            onChange={(e) => updateLocalHours(index, 'close_time', e.target.value)}
-                            className="w-full p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={handleSaveHours}
-                disabled={saving || !hasChanges}
-                className={`px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2 ${
-                  hasChanges
-                    ? 'bg-green-500 hover:bg-green-600 text-white'
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    Salvando...
-                  </>
-                ) : (
-                  <>
-                    <Save size={20} />
-                    Salvar Horários
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'promotions' && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Tag size={20} className="text-orange-600" />
-              Programação de Promoções
-            </h3>
-
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
-              <div className="flex items-start gap-3">
-                <AlertCircle size={20} className="text-orange-600 mt-0.5" />
-                <div>
-                  <p className="font-medium text-orange-800">Programação de Promoções</p>
-                  <p className="text-orange-700 text-sm mt-1">
-                    Configure os dias e horários em que cada promoção estará disponível.
-                    As promoções só aparecerão no cardápio nos dias programados.
-                  </p>
+                  )}
+                  
+                  {item.observations && <p>Obs: {item.observations}</p>}
                 </div>
-              </div>
+              ))}
+              <p className="text-xs">--------------------------</p>
             </div>
-
-            <div className="space-y-4">
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="font-medium text-gray-800">Produtos com Promoções</h4>
-                <div className="text-sm text-gray-500">
-                  {products.filter(p => p.originalPrice && p.originalPrice > p.price).length} produtos com desconto
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Produto</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Preço Normal</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Preço Promocional</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Programação</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {products
-                      .filter(p => p.originalPrice && p.originalPrice > p.price)
-                      .map(product => {
-                        const schedule = getProductSchedule(product.id);
-                        const hasSchedule = schedule?.enabled;
-                        const selectedDays = schedule?.days ? 
-                          Object.entries(schedule.days)
-                            .filter(([_, enabled]) => enabled)
-                            .map(([day]) => {
-                              const dayMap: Record<string, string> = {
-                                'monday': 'Segunda',
-                                'tuesday': 'Terça',
-                                'wednesday': 'Quarta',
-                                'thursday': 'Quinta',
-                                'friday': 'Sexta',
-                                'saturday': 'Sábado',
-                                'sunday': 'Domingo'
-                              };
-                              return dayMap[day] || day;
-                            })
-                            .join(', ') : 'Todos os dias';
-                            
-                        return (
-                          <tr key={product.id} className="hover:bg-gray-50">
-                            <td className="px-4 py-4 whitespace-nowrap">
-                              <div className="flex items-center">
-                                <div className="flex-shrink-0 h-10 w-10">
-                                  <img className="h-10 w-10 rounded-full object-cover" src={product.image} alt={product.name} />
-                                </div>
-                                <div className="ml-4">
-                                  <div className="text-sm font-medium text-gray-900">{product.name}</div>
-                                  <div className="text-sm text-gray-500">{product.category}</div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 whitespace-nowrap">
-                              <div className="text-sm text-gray-900">
-                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(product.originalPrice || 0)}
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 whitespace-nowrap">
-                              <div className="text-sm text-green-600 font-semibold">
-                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(product.price)}
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 whitespace-nowrap">
-                              <div className={`text-sm ${hasSchedule ? 'text-green-600' : 'text-gray-500'}`}>
-                                {hasSchedule ? selectedDays : 'Não programado'}
-                              </div>
-                              {hasSchedule && schedule?.startTime && schedule?.endTime && (
-                                <div className="text-xs text-gray-500">
-                                  {schedule.startTime} - {schedule.endTime}
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-4 py-4 whitespace-nowrap text-sm font-medium">
-                              <button
-                                onClick={() => handleScheduleProduct(product)}
-                                className="text-orange-600 hover:text-orange-900 bg-orange-50 hover:bg-orange-100 px-3 py-1 rounded-lg transition-colors"
-                              >
-                                {hasSchedule ? 'Editar Programação' : 'Programar Dias'}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-
-              {products.filter(p => p.originalPrice && p.originalPrice > p.price).length === 0 && (
-                <div className="text-center py-8">
-                  <Tag size={48} className="mx-auto text-gray-300 mb-4" />
-                  <p className="text-gray-500">Nenhum produto com promoção configurada</p>
-                  <p className="text-gray-400 text-sm mt-2">
-                    Configure promoções na seção de Produtos
-                  </p>
+            
+            <div className="mb-3">
+              <p className="text-xs">Subtotal: {formatPrice(order.total_price - (order.delivery_fee || 0))}</p>
+              {order.delivery_fee && order.delivery_fee > 0 && <p className="text-xs">Taxa: {formatPrice(order.delivery_fee)}</p>}
+              <p className="text-xs font-bold">TOTAL: {formatPrice(order.total_price)}</p>
+              <p className="text-xs">--------------------------</p>
+            </div>
+            
+            <div className="mb-3">
+              <p className="text-xs font-bold">PAGAMENTO:</p>
+              <p className="text-xs">Forma: {getPaymentMethodLabel(order.payment_method)}</p>
+              {order.change_for && <p className="text-xs">Troco para: {formatPrice(order.change_for)}</p>}
+              {order.payment_method === 'pix' && (
+                <div className="mt-2">
+                  <p className="text-xs">⚠️ IMPORTANTE:</p>
+                  <p className="text-xs">Envie o comprovante do PIX</p>
+                  <p className="text-xs">para confirmar o pedido!</p>
                 </div>
               )}
+              <p className="text-xs">--------------------------</p>
+            </div>
+            
+            <div className="text-center text-xs">
+              <p>Obrigado pela preferência!</p>
+              <p>Elite Açaí</p>
             </div>
           </div>
-        )}
-
-        {activeTab === 'printer' && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Printer size={20} className="text-purple-600" />
-              Configurações de Impressora
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Largura do Papel
-                </label>
-                <select
-                  value={printerSettings.paper_width}
-                  onChange={(e) => setPrinterSettings(prev => ({ ...prev, paper_width: e.target.value }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="58mm">58mm</option>
-                  <option value="80mm">80mm (Padrão)</option>
-                  <option value="A4">A4</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tamanho da Fonte
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="5"
-                  step="0.5"
-                  value={printerSettings.font_size}
-                  onChange={(e) => setPrinterSettings(prev => ({ ...prev, font_size: parseFloat(e.target.value) || 2 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Escala
-                </label>
-                <input
-                  type="number"
-                  min="0.5"
-                  max="2"
-                  step="0.1"
-                  value={printerSettings.scale}
-                  onChange={(e) => setPrinterSettings(prev => ({ ...prev, scale: parseFloat(e.target.value) || 1 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Margem Esquerda (mm)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="20"
-                  value={printerSettings.margin_left}
-                  onChange={(e) => setPrinterSettings(prev => ({ ...prev, margin_left: parseInt(e.target.value) || 0 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Margem Superior (mm)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="20"
-                  value={printerSettings.margin_top}
-                  onChange={(e) => setPrinterSettings(prev => ({ ...prev, margin_top: parseInt(e.target.value) || 0 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Margem Inferior (mm)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="20"
-                  value={printerSettings.margin_bottom}
-                  onChange={(e) => setPrinterSettings(prev => ({ ...prev, margin_bottom: parseInt(e.target.value) || 0 }))}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={handleSavePrinterSettings}
-                className="px-6 py-3 rounded-lg font-semibold transition-colors flex items-center gap-2 bg-purple-500 hover:bg-purple-600 text-white"
-              >
-                <Save size={20} />
-                Salvar Configurações de Impressora
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Product Schedule Modal */}
-        {showScheduleModal && selectedProductForSchedule && (
-          <ProductScheduleModal
-            product={selectedProductForSchedule}
-            isOpen={showScheduleModal}
-            onClose={() => {
-              setShowScheduleModal(false);
-              setSelectedProductForSchedule(null);
-            }}
-            onSave={handleSaveSchedule}
-            currentSchedule={getProductSchedule(selectedProductForSchedule.id)}
-          />
-        )}
+        </div>
       </div>
-    </PermissionGuard>
+
+      {/* Print Content - Only visible when printing */}
+      <div className="hidden print:block print:w-full print:h-full print:bg-white print:text-black thermal-print-content">
+        <div style={{ fontFamily: 'Courier New, monospace', fontSize: '14px', lineHeight: '1.4', color: 'black', background: 'white', padding: '10mm' }}>
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: '15px', borderBottom: '1px dashed black', paddingBottom: '10px', color: 'black', background: 'white' }}>
+            <h1 style={{ fontSize: '20px', fontWeight: 'bold', margin: '0 0 5px 0', color: '#000' }}>ELITE AÇAÍ</h1>
+            <p style={{ fontSize: '12px', margin: '2px 0' }}>Delivery Premium</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Rua Dois, 2130-A</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Residencial 1 - Cágado</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Tel: (85) 98904-1010</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>CNPJ: {storeSettings?.cnpj || '38.130.139/0001-22'}</p>
+          </div>
+
+          {/* Order Info */}
+          <div style={{ marginBottom: '15px', color: 'black', background: 'white' }}>
+            <p style={{ fontSize: '12px', fontWeight: 'bold', textAlign: 'center', marginBottom: '10px' }}>=== PEDIDO DE DELIVERY ===</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Pedido: #{order.id.slice(-8)}</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Data: {new Date(order.created_at).toLocaleDateString('pt-BR')}</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Hora: {new Date(order.created_at).toLocaleTimeString('pt-BR')}</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Status: {getStatusLabel(order.status)}</p>
+          </div>
+
+          {/* Customer Info */}
+          <div style={{ borderBottom: '1px dashed black', paddingBottom: '10px', marginBottom: '15px', color: 'black', background: 'white' }}>
+            <p style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '5px' }}>DADOS DO CLIENTE:</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Nome: {order.customer_name}</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Telefone: {order.customer_phone}</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Endereço: {order.customer_address}</p>
+            <p style={{ fontSize: '10px', margin: '2px 0' }}>Bairro: {order.customer_neighborhood}</p>
+            {order.customer_complement && <p style={{ fontSize: '10px', margin: '2px 0' }}>Complemento: {order.customer_complement}</p>}
+          </div>
+
+          {/* Items */}
+          <div style={{ borderBottom: '1px dashed black', paddingBottom: '10px', marginBottom: '15px', color: 'black', background: 'white' }}>
+            <p style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' }}>ITENS DO PEDIDO:</p>
+            {order.items.map((item, index) => (
+              <div key={index} style={{ marginBottom: '10px' }}>
+                <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '2px 0' }}>{item.product_name}</p>
+                {item.selected_size && <p style={{ fontSize: '12px', margin: '2px 0' }}>Tamanho: {item.selected_size}</p>}
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '12px' }}>{item.quantity}x {formatPrice(item.unit_price)}</span>
+                  <span style={{ fontSize: '12px' }}>{formatPrice(item.total_price)}</span>
+                </div>
+                
+                {item.complements && item.complements.length > 0 && (
+                  <div style={{ marginLeft: '8px', marginTop: '5px' }}>
+                    <p style={{ fontSize: '12px' }}>Complementos:</p>
+                    {item.complements.map((comp, idx) => (
+                      <p key={idx} style={{ fontSize: '12px', marginLeft: '8px' }}>• {comp.name}{comp.price > 0 && ` (+${formatPrice(comp.price)})`}</p>
+                    ))}
+                  </div>
+                )}
+                
+                {item.observations && <p style={{ fontSize: '12px', marginLeft: '8px', marginTop: '5px' }}>Obs: {item.observations}</p>}
+              </div>
+            ))}
+          </div>
+
+          {/* Summary */}
+          <div style={{ borderBottom: '1px dashed black', paddingBottom: '10px', marginBottom: '15px', color: 'black', background: 'white' }}>
+            <p style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' }}>RESUMO:</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px' }}>Subtotal:</span>
+              <span style={{ fontSize: '12px' }}>{formatPrice(order.total_price - (order.delivery_fee || 0))}</span>
+            </div>
+            {order.delivery_fee && order.delivery_fee > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '12px' }}>Taxa de Entrega:</span>
+                <span style={{ fontSize: '12px' }}>{formatPrice(order.delivery_fee)}</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', borderTop: '1px solid black', paddingTop: '5px', marginTop: '5px' }}>
+              <span style={{ fontSize: '14px' }}>TOTAL:</span>
+              <span style={{ fontSize: '14px' }}>{formatPrice(order.total_price)}</span>
+            </div>
+          </div>
+
+          {/* Payment */}
+          <div style={{ borderBottom: '1px dashed black', paddingBottom: '10px', marginBottom: '15px', color: 'black', background: 'white' }}>
+            <p style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '5px' }}>PAGAMENTO:</p>
+            <p style={{ fontSize: '12px', margin: '2px 0' }}>Forma: {getPaymentMethodLabel(order.payment_method)}</p>
+            {order.change_for && <p style={{ fontSize: '12px', margin: '2px 0' }}>Troco para: {formatPrice(order.change_for)}</p>}
+            {order.payment_method === 'pix' && (
+              <div style={{ marginTop: '5px' }}>
+                <p style={{ fontSize: '12px', margin: '2px 0' }}>⚠️ IMPORTANTE:</p>
+                <p style={{ fontSize: '12px', margin: '2px 0' }}>Envie o comprovante do PIX</p>
+                <p style={{ fontSize: '12px', margin: '2px 0' }}>para confirmar o pedido!</p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div style={{ textAlign: 'center', fontSize: '12px', borderTop: '1px solid black', paddingTop: '10px', color: 'black', background: 'white' }}>
+            <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Obrigado pela preferência!</p>
+            <p style={{ margin: '2px 0' }}>Elite Açaí - O melhor açaí da cidade!</p>
+            <p style={{ margin: '2px 0' }}>@eliteacai</p>
+            <p style={{ margin: '2px 0' }}>⭐⭐⭐⭐⭐ Avalie-nos no Google</p>
+            <div style={{ marginTop: '15px', paddingTop: '10px', borderTop: '1px solid black' }}>
+              <p style={{ margin: '2px 0' }}>Elite Açaí - CNPJ: {storeSettings?.cnpj || '38.130.139/0001-22'}</p>
+              <p style={{ margin: '2px 0' }}>Impresso: {new Date().toLocaleString('pt-BR')}</p>
+              <p style={{ margin: '2px 0' }}>Este não é um documento fiscal</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </>
   );
 };
 
-export default PDVSettings;
+export default OrderPrintView;

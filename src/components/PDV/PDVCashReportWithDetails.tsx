@@ -153,7 +153,7 @@ const PDVCashReportWithDetails: React.FC = () => {
   });
 
   return (
-    <PermissionGuard hasPermission={hasPermission('can_view_cash_report') || hasPermission('can_view_cash_register')} showMessage={true}>
+    <div>
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Relatório Detalhado de Caixa</h1>
@@ -534,7 +534,7 @@ const PDVCashReportWithDetails: React.FC = () => {
         }
       `}</style>
     </div>
-    </PermissionGuard>
+    </div>
   );
 };
 

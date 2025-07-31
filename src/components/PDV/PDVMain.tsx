@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calculator, Package, BarChart3, Settings, Users, ArrowLeft, DollarSign, Bell, FileText, LogOut, User, Layers, ChevronUp, ChevronDown, Truck, ShoppingBag } from 'lucide-react';
+import { Calculator, Package, BarChart3, Settings, Users, ArrowLeft, DollarSign, Bell, FileText, LogOut, User, Layers, ChevronUp, ChevronDown, Truck, ShoppingBag, MessageSquare } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useScale } from '../../hooks/useScale';
@@ -11,9 +11,9 @@ import { useStoreHours } from '../../hooks/useStoreHours';
 import PDVCashReportWithDateFilter from './PDVCashReportWithDateFilter';
 import PDVCashReportWithDetails from './PDVCashReportWithDetails';
 import PDVDailyCashReport from './PDVDailyCashReport';
+import PDVDailyDeliveryReport from './PDVDailyDeliveryReport';
 import PDVSettings from './PDVSettings'; 
 import PDVOperators from './PDVOperators';
-import { MessageSquare } from 'lucide-react';
 import PDVSalesReport from './PDVSalesReport';
 import CashRegisterMenu from './CashRegisterMenu';
 import AttendantPanel from '../Orders/AttendantPanel';
@@ -40,6 +40,7 @@ const menuCategories = [
       { id: 'reports' as const, label: 'Gráficos', icon: BarChart3, color: 'bg-purple-500' },
       { id: 'sales_report' as const, label: 'Relatório de Vendas', icon: BarChart3, color: 'bg-indigo-500' },
       { id: 'daily_cash_report' as const, label: 'Relatório de Caixa Diário', icon: FileText, color: 'bg-teal-500' },
+      { id: 'delivery_report' as const, label: 'Relatório de Delivery', icon: Truck, color: 'bg-purple-500' },
       { id: 'cash_report' as const, label: 'Relatório de Caixa por Período', icon: DollarSign, color: 'bg-emerald-500' },
       { id: 'cash_report_details' as const, label: 'Histórico de Caixas', icon: FileText, color: 'bg-amber-500' }
     ]
@@ -83,7 +84,7 @@ interface PDVMainProps {
 }
 
 const PDVMain: React.FC<PDVMainProps> = ({ onBack, operator }) => {
-  const [activeScreen, setActiveScreen] = useState<'attendance' | 'products' | 'reports' | 'settings' | 'operators' | 'cash_register' | 'sales_report' | 'cash_report' | 'orders' | 'cash_menu' | 'daily_cash_report' | 'cash_report_details'>('attendance');
+  const [activeScreen, setActiveScreen] = useState<'attendance' | 'products' | 'reports' | 'settings' | 'operators' | 'cash_register' | 'sales_report' | 'cash_report' | 'orders' | 'cash_menu' | 'daily_cash_report' | 'cash_report_details' | 'delivery_report'>('attendance');
   const { hasPermission } = usePermissions();
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     main: true,
@@ -99,6 +100,25 @@ const PDVMain: React.FC<PDVMainProps> = ({ onBack, operator }) => {
   
   // Initialize scale hook at the PDVMain level
   const scaleHook = useScale();
+  
+  // Check for active screen in localStorage (for navigation between components)
+  useEffect(() => {
+    const storedScreen = localStorage.getItem('pdv_active_screen');
+    if (storedScreen) {
+      // Check if it's a valid screen
+      const validScreens = [
+        'attendance', 'products', 'reports', 'settings', 'operators', 
+        'cash_register', 'sales_report', 'cash_report', 'orders', 
+        'cash_menu', 'daily_cash_report', 'cash_report_details', 'delivery_report'
+      ];
+      
+      if (validScreens.includes(storedScreen)) {
+        setActiveScreen(storedScreen as any);
+        // Clear the stored screen to prevent it from being used again
+        localStorage.removeItem('pdv_active_screen');
+      }
+    }
+  }, []);
 
   // Carregar configuração de som
   useEffect(() => {
@@ -204,7 +224,7 @@ const PDVMain: React.FC<PDVMainProps> = ({ onBack, operator }) => {
 
   const permissionMap = {
     'pdv': 'can_view_attendance',
-    'orders': 'can_view_orders'
+    'orders': 'can_view_orders',
   };
   
   // Método alternativo para tocar som
@@ -296,6 +316,7 @@ const PDVMain: React.FC<PDVMainProps> = ({ onBack, operator }) => {
       'reports': 'can_view_reports',
       'sales_report': 'can_view_sales_report',
       'cash_report': 'can_view_cash_report',
+      'delivery_report': 'can_view_orders',
       'cash_report_details': 'can_view_cash_report',
       'daily_cash_report': 'can_view_cash_report',
       'operators': 'can_view_operators',
@@ -339,6 +360,8 @@ const PDVMain: React.FC<PDVMainProps> = ({ onBack, operator }) => {
         return <PDVCashReportWithDateFilter />;
       case 'daily_cash_report':
         return <PDVDailyCashReport />;
+      case 'delivery_report':
+        return <PDVDailyDeliveryReport />;
       case 'cash_report_details':
         return <PDVCashReportWithDetails />;
       default:
