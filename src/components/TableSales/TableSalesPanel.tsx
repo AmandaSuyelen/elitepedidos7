@@ -1188,7 +1188,20 @@ const TableSalesPanel: React.FC<TableSalesPanelProps> = ({ storeId, operatorName
                   </div>
                 </div>
 
-              
+                {/* Notes */}
+                <div className="bg-gray-50 rounded-xl p-4 mb-6">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Observações
+                  </label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors bg-white resize-none"
+                    rows={3}
+                    placeholder="Observações sobre a venda..."
+                  />
+                </div> 
+
                 {/* Cart Items */}
                 <div className="flex-1 overflow-y-auto mb-6">
                   {cart.length === 0 ? (
