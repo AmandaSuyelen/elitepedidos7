@@ -137,7 +137,7 @@ const TableSalesPanel: React.FC<TableSalesPanelProps> = ({ storeId, operatorName
         .from(tableName)
         .select(`*, current_sale:${salesTableName}!${tableName}_current_sale_id_fkey(*)`)
         .eq('is_active', true)
-        .order('number');
+          current_sale:${salesTableName}!${tablesTableName}_current_sale_id_fkey(*)
 
       if (error) throw error;
       
