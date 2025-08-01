@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Users, Plus, Trash2, RefreshCw, AlertCircle, Clock, CheckCircle, 
   Utensils, Sparkles, ShoppingCart, X, Minus, Calculator, DollarSign,
-  Save, Package, Search, Eye, Edit3, User, MapPin, Settings
+  Save, Package, Search, Eye, Edit3, User, MapPin, Settings, Scale, Check
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { RestaurantTable, TableSale, TableCartItem } from '../../types/table-sales';
@@ -41,6 +41,7 @@ const TableSalesPanel: React.FC<TableSalesPanelProps> = ({ storeId, operatorName
   });
   const [showWeightModal, setShowWeightModal] = useState(false);
   const [selectedWeightProduct, setSelectedWeightProduct] = useState<any>(null);
+  const [selectedWeighableProduct, setSelectedWeighableProduct] = useState<any>(null);
   const [loadingSaleItems, setLoadingSaleItems] = useState(false);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -357,6 +358,13 @@ const TableSalesPanel: React.FC<TableSalesPanelProps> = ({ storeId, operatorName
   };
 
   const addToCart = (product: any) => {
+    // Verificar se é produto pesável
+    if (product.is_weighable || product.price_per_gram) {
+      setSelectedWeighableProduct(product);
+      setShowWeightModal(true);
+      return;
+    }
+    
     const existingIndex = cart.findIndex(item => item.product_code === product.code);
     
     if (existingIndex >= 0) {
@@ -384,6 +392,29 @@ const TableSalesPanel: React.FC<TableSalesPanelProps> = ({ storeId, operatorName
       };
       setCart(prev => [...prev, newItem]);
     }
+  };
+
+  const handleWeightConfirm = (weightInGrams: number) => {
+    if (selectedWeighableProduct && weightInGrams > 0) {
+      const weightInKg = weightInGrams / 1000;
+      const pricePerGram = selectedWeighableProduct.price_per_gram || 0;
+      const subtotal = weightInGrams * pricePerGram;
+      
+      const newItem: TableCartItem = {
+        product_code: selectedWeighableProduct.code || `PROD${Date.now()}`,
+        product_name: selectedWeighableProduct.name,
+        quantity: 1,
+        weight: weightInKg,
+        price_per_gram: pricePerGram,
+        subtotal: subtotal,
+        notes: `Peso: ${weightInGrams}g`
+      };
+      
+      setCart(prev => [...prev, newItem]);
+    }
+    
+    setShowWeightModal(false);
+    setSelectedWeighableProduct(null);
   };
 
   const updateCartItemQuantity = (index: number, quantity: number) => {
@@ -1377,6 +1408,91 @@ const TableSalesPanel: React.FC<TableSalesPanelProps> = ({ storeId, operatorName
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Weight Modal */}
+      {showWeightModal && selectedWeighableProduct && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-green-500 p-6 text-white relative overflow-hidden">
+              <div className="absolute inset-0 bg-black/10"></div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-white/20 rounded-full p-2 backdrop-blur-sm">
+                      <Scale size={24} className="text-white" />
+                    </div>
+                    <h2 className="text-xl font-bold">Pesagem de Produto</h2>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowWeightModal(false);
+                      setSelectedWeighableProduct(null);
+                    }}
+                    className="bg-white/20 hover:bg-white/30 rounded-full p-2 transition-colors"
+                  >
+                    <X size={20} className="text-white" />
+                  </button>
+                </div>
+                <p className="text-white/90 truncate">{selectedWeighableProduct.name}</p>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Input manual */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Peso em gramas
+                  </label>
+                  <input
+                    type="number"
+                    id="weight-input"
+                    placeholder="Digite o peso em gramas"
+                    className="w-full p-4 text-lg border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                    autoFocus
+                  />
+                </div>
+                
+                {/* Botões de peso rápido */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[100, 200, 300, 500, 750, 1000].map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => {
+                        const input = document.getElementById('weight-input') as HTMLInputElement;
+                        if (input) input.value = g.toString();
+                      }}
+                      className="py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors text-sm"
+                    >
+                      {g}g
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Botão confirmar */}
+              <button
+                onClick={() => {
+                  const input = document.getElementById('weight-input') as HTMLInputElement;
+                  const weight = parseInt(input?.value || '0');
+                  if (weight > 0) {
+                    handleWeightConfirm(weight);
+                  } else {
+                    alert('Por favor, digite um peso válido');
+                  }
+                }}
+                className="w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white"
+              >
+                <div className="flex items-center justify-center gap-3">
+                  <Check size={24} />
+                  <span>Confirmar Peso</span>
+                </div>
+              </button>
             </div>
           </div>
         </div>
