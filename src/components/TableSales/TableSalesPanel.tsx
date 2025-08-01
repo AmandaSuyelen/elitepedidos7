@@ -478,7 +478,7 @@ const TableSalesPanel: React.FC<TableSalesPanelProps> = ({ storeId, operatorName
         quantity: item.quantity,
         unit_price: item.unit_price,
         price_per_gram: item.price_per_gram,
-        weight: item.weight,
+        weight_kg: item.weight,
         subtotal: item.subtotal,
         notes: item.notes
       }));
